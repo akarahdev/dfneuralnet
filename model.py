@@ -12,11 +12,11 @@ class WorldPredictorModel(nn.Module):
         super().__init__()
         self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(2, 10),
+            nn.Linear(3, 16),
             nn.ReLU(),
-            nn.Linear(10, 10),
+            nn.Linear(16, 16),
             nn.ReLU(),
-            nn.Linear(10, 1),
+            nn.Linear(16, 1),
             nn.Sigmoid()
         )
 
@@ -32,7 +32,6 @@ def train(
         loss_fn: nn.Module,
         optimizer: Optimizer
 ):
-    print(dataloader.dataset)
     model.train()
     for inp, output in dataloader:
         inp: torch.Tensor = inp.to(util.device)
@@ -49,17 +48,19 @@ def test(
         dataloader: DataLoader[Sized],
         model: WorldPredictorModel,
         loss_fn: nn.Module,
-):
-    size = len(dataloader.dataset)
+) -> set[tuple[float, float, float]]:
     num_batches = len(dataloader)
     model.eval()
     test_loss, correct = 0, 0
+    ret = set()
     with torch.no_grad():
         for inp, out in dataloader:
             inp, out = inp.to(util.device), out.to(util.device)
             pred = model(inp)
+            if pred.item() > 0.5:
+                ret.add((inp[0][0].item(), inp[0][1].item(), inp[0][2].item()))
             test_loss += loss_fn(pred, out).item()
-            correct += (pred.argmax(1) == out).sum().item()
     test_loss /= num_batches
-    correct /= size
-    print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+    print(f"Test Error: \n Avg loss: {test_loss:>8f} \n")
+    print(ret)
+    return ret
