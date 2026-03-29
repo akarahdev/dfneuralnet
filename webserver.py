@@ -9,31 +9,40 @@ import torch.nn as nn
 import util
 import threading
 
+def make_dataloader() -> DataLoader:
+    return DataLoader(
+        dataset,
+        batch_size=max(len(dataset), 1),
+        pin_memory=(util.device == "cuda"),
+        num_workers=0,
+    )
+
+def make_optimizer() -> torch.optim.Optimizer:
+    return torch.optim.Adam(network.parameters(), lr=0.001)
+
 app = Flask(__name__)
 
 state: set[tuple[int, int, int]] = set()
 network = model.WorldPredictorModel().to(util.device)
 network_lock = threading.Lock()
 dataset = data.WorldDataset(state)
-dataloader = DataLoader(dataset, batch_size=max(len(dataset), 1), pin_memory=(util.device != "cpu"), num_workers=0)
+dataloader = make_dataloader()
 loss_fn = nn.BCELoss()
-optimizer = torch.optim.Adam(network.parameters(), lr=0.001)
+optimizer = make_optimizer()
 
 training_thread: threading.Thread | None = None
 training_active = False
 
 
-def make_dataloader() -> DataLoader:
-    return DataLoader(
-        dataset,
-        batch_size=max(len(dataset), 1),
-        pin_memory=(util.device != "cpu"),
-        num_workers=0,
-    )
+
 
 
 def eternal_train():
     global training_active
+    global dataloader
+    global network
+    global loss_fn
+    global optimizer
     training_active = True
     print(f"Training started with state: {state}")
     epoch = 0
@@ -65,7 +74,7 @@ def reset_model():
     global network, optimizer
     with network_lock:
         network = model.WorldPredictorModel().to(util.device)
-        optimizer = torch.optim.Adam(network.parameters(), lr=0.001)
+        optimizer = make_optimizer()
     return "Network reset"
 
 
@@ -76,11 +85,7 @@ def create_network():
 
 @app.post("/update_dataset")
 def update_dataset():
-    global state, network, optimizer, training_active, training_thread, dataset, dataloader
-
-    training_active = False
-    if training_thread and training_thread.is_alive():
-        training_thread.join()
+    global state, training_active, training_thread
 
     print(f"Data: {request.get_data()}")
     json_data = request.get_json()
@@ -97,19 +102,15 @@ def update_dataset():
             continue
         new_state.add((element[0], element[1], element[2]))
 
-    state.clear()
-    state.update(new_state)
-
-    dataset = data.WorldDataset(state)
-    dataloader = make_dataloader()
-
-    network = model.WorldPredictorModel().to(util.device)
-    optimizer = torch.optim.Adam(network.parameters(), lr=0.001)
+    with network_lock:
+        state.clear()
+        state.update(new_state)
 
     print(state)
 
-    training_thread = threading.Thread(target=eternal_train, daemon=True)
-    training_thread.start()
+    if not training_thread or not training_thread.is_alive():
+        training_thread = threading.Thread(target=eternal_train, daemon=True)
+        training_thread.start()
 
     return "Dataset updated"
 
