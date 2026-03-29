@@ -61,6 +61,7 @@ def test(
                 ret.add((inp[0][0].item(), inp[0][1].item(), inp[0][2].item()))
             test_loss += loss_fn(pred, out).item()
     test_loss /= num_batches
-    print(f"Test Error: \n Avg loss: {test_loss:>8f} \n")
+    print(f"Test Error: \n Avg loss: {test_loss:>8f}")
     print(ret)
+    print()
     return ret

@@ -7,26 +7,39 @@ import data
 import torch
 import torch.nn as nn
 import util
+import threading
 
 app = Flask(__name__)
 
 state: set[tuple[int, int, int]] = set()
 network = model.WorldPredictorModel().to(util.device)
+network_lock = threading.Lock()
+dataset = data.WorldDataset(state)
+dataloader = DataLoader(dataset, batch_size=1)
+loss_fn = nn.BCELoss()
+optimizer = torch.optim.SGD(network.parameters(), lr=0.01)
+
+training_thread: threading.Thread | None = None
+training_active = False
+
+def eternal_train():
+    global training_active
+    training_active = True
+    print(f"Training started with state: {state}")
+    epoch = 0
+    while training_active:
+        print(f"Epoch {epoch}")
+        with network_lock:
+            model.train(dataloader, network, loss_fn, optimizer)
+            model.test(dataloader, network, loss_fn)
+        epoch += 1
+
+
 
 @app.get("/train_epoch")
 def train_epoch():
-    global network
-    global state
-    loss_fn = nn.BCELoss()
-    optimizer = torch.optim.SGD(network.parameters())
-    print(state)
-    dataset = data.WorldDataset(state)
-    dataloader = DataLoader(dataset, batch_size=1)
-    for epoch in range(30):
-        print(f"Epoch {epoch}")
-        model.train(dataloader, network, loss_fn, optimizer)
-        model.test(dataloader, network, loss_fn)
-    out = model.test(dataloader, network, loss_fn)
+    with network_lock:
+        out = model.test(dataloader, network, loss_fn)
     ret = "["
     for x, y, z in out:
         ret += f"[{x:.2f},{y:.2f},{z:.2f}], "
@@ -53,25 +66,39 @@ def create_network():
 
 @app.post("/update_dataset")
 def update_dataset():
+    global state, network, optimizer, training_active, training_thread
+    
+    # Stop existing training thread if any
+    training_active = False
+    if training_thread and training_thread.is_alive():
+        training_thread.join()
+
     print(f"Data: {request.get_data()}")
     json_data = request.get_json()
     print(f"Updated dataset: {json_data}")
     if not json_data or "dataset" not in json_data:
         return "Invalid JSON", 400
-    global state
-    state = set()
+
+    new_state = set()
     value = json_data["dataset"]
     if not isinstance(value, list):
         return "Dataset must be a list", 400
     for element in value:
         if not isinstance(element, list) or len(element) != 3:
             continue
-        state.add((element[0], element[1], element[2]))
+        new_state.add((element[0], element[1], element[2]))
 
-    global network
+    state.clear()
+    state.update(new_state)
+
     network = model.WorldPredictorModel().to(util.device)
+    optimizer = torch.optim.SGD(network.parameters(), lr=0.01)
 
     print(state)
+
+    training_thread = threading.Thread(target=eternal_train, daemon=True)
+    training_thread.start()
+
     return "Dataset updated"
 
 
