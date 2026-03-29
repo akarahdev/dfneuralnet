@@ -1,4 +1,12 @@
-device: str = "cpu"
+import torch
+
+device: str = ""
+if torch.cuda.is_available():
+    device = "cuda"
+elif torch.mps.is_available():
+    device = "mps"
+else:
+    device = "cpu"
 
 def get_from_range(index: float, minimum: float, maximum: float) -> float:
     """

@@ -15,12 +15,22 @@ state: set[tuple[int, int, int]] = set()
 network = model.WorldPredictorModel().to(util.device)
 network_lock = threading.Lock()
 dataset = data.WorldDataset(state)
-dataloader = DataLoader(dataset, batch_size=1)
+dataloader = DataLoader(dataset, batch_size=max(len(dataset), 1), pin_memory=(util.device != "cpu"), num_workers=0)
 loss_fn = nn.BCELoss()
-optimizer = torch.optim.SGD(network.parameters(), lr=0.01)
+optimizer = torch.optim.Adam(network.parameters(), lr=0.001)
 
 training_thread: threading.Thread | None = None
 training_active = False
+
+
+def make_dataloader() -> DataLoader:
+    return DataLoader(
+        dataset,
+        batch_size=max(len(dataset), 1),
+        pin_memory=(util.device != "cpu"),
+        num_workers=0,
+    )
+
 
 def eternal_train():
     global training_active
@@ -28,35 +38,35 @@ def eternal_train():
     print(f"Training started with state: {state}")
     epoch = 0
     while training_active:
-        print(f"Epoch {epoch}")
         with network_lock:
             model.train(dataloader, network, loss_fn, optimizer)
-            model.test(dataloader, network, loss_fn)
+            _, test_error = model.test(dataloader, network, loss_fn)
+        if epoch % 100 == 0:
+            print(f"Epoch {epoch}, Loss {test_error:.5f}")
         epoch += 1
-
 
 
 @app.get("/train_epoch")
 def train_epoch():
     with network_lock:
-        out = model.test(dataloader, network, loss_fn)
+        out, _ = model.test(dataloader, network, loss_fn)
     ret = "["
     for x, y, z in out:
         ret += f"[{x:.2f},{y:.2f},{z:.2f}], "
     ret += "]"
-    print(ret)
-    print(out)
-    print(state)
+    # print(ret)
+    # print(out)
+    # print(state)
     return ret
-
-
-current_model = model.WorldPredictorModel()
 
 
 @app.get("/reset_network")
 def reset_model():
-    global current_model
-    current_model = model.WorldPredictorModel()
+    global network, optimizer
+    with network_lock:
+        network = model.WorldPredictorModel().to(util.device)
+        optimizer = torch.optim.Adam(network.parameters(), lr=0.001)
+    return "Network reset"
 
 
 @app.get("/create_network")
@@ -66,9 +76,8 @@ def create_network():
 
 @app.post("/update_dataset")
 def update_dataset():
-    global state, network, optimizer, training_active, training_thread
-    
-    # Stop existing training thread if any
+    global state, network, optimizer, training_active, training_thread, dataset, dataloader
+
     training_active = False
     if training_thread and training_thread.is_alive():
         training_thread.join()
@@ -91,8 +100,11 @@ def update_dataset():
     state.clear()
     state.update(new_state)
 
+    dataset = data.WorldDataset(state)
+    dataloader = make_dataloader()
+
     network = model.WorldPredictorModel().to(util.device)
-    optimizer = torch.optim.SGD(network.parameters(), lr=0.01)
+    optimizer = torch.optim.Adam(network.parameters(), lr=0.001)
 
     print(state)
 
