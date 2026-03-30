@@ -8,6 +8,8 @@ elif torch.mps.is_available():
 else:
     device = "cpu"
 
+needed_type = torch.float32
+
 def get_from_range(index: float, minimum: float, maximum: float) -> float:
     """
     Returns the value in the specified range at the specified index.

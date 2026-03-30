@@ -7,18 +7,16 @@ from torch.utils.data import DataLoader
 
 import util
 
-print(f"running on device {util.device}")
-
 class WorldPredictorModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(3, 100),
+            nn.Linear(3, 50),
             nn.ReLU(),
-            nn.Linear(100, 100),
+            nn.Linear(50, 50),
             nn.ReLU(),
-            nn.Linear(100, 1),
+            nn.Linear(50, 1),
             nn.Sigmoid()
         )
 
@@ -47,6 +45,25 @@ def train(
 
 
 def test(
+        dataloader: DataLoader[Sized],
+        model: WorldPredictorModel,
+        loss_fn: nn.Module,
+) -> float:
+    model.eval()
+    test_loss = 0.0
+
+    with torch.no_grad():
+        for inp, out in dataloader:
+            inp = inp.to(util.device, non_blocking=True)
+            out.to(util.device, non_blocking=True)
+
+            pred = model(inp)
+            test_loss += loss_fn(pred, out).item()
+
+    return test_loss / len(dataloader)
+
+
+def test_with_output(
         dataloader: DataLoader[Sized],
         model: WorldPredictorModel,
         loss_fn: nn.Module,

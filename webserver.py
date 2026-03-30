@@ -9,24 +9,29 @@ import torch.nn as nn
 import util
 import threading
 
-def make_dataloader() -> DataLoader:
+from data import StandardWorldDataset, ExtrapolatedWorldDataset
+
+
+def make_dataloader(datasett: StandardWorldDataset) -> DataLoader:
     return DataLoader(
-        dataset,
-        batch_size=max(len(dataset), 1),
+        datasett,
+        batch_size=max(len(datasett), 1),
         pin_memory=(util.device == "cuda"),
         num_workers=0,
     )
 
 def make_optimizer() -> torch.optim.Optimizer:
-    return torch.optim.Adam(network.parameters(), lr=0.001)
+    return torch.optim.Adam(network.parameters(), amsgrad=True)
 
 app = Flask(__name__)
 
 state: set[tuple[int, int, int]] = set()
 network = model.WorldPredictorModel().to(util.device)
 network_lock = threading.Lock()
-dataset = data.WorldDataset(state)
-dataloader = make_dataloader()
+dataset: StandardWorldDataset = data.StandardWorldDataset(state)
+extrapolated_dataset: ExtrapolatedWorldDataset = data.ExtrapolatedWorldDataset(state)
+dataloader = make_dataloader(dataset)
+extrapolated_dataloader = make_dataloader(extrapolated_dataset)
 loss_fn = nn.BCELoss()
 optimizer = make_optimizer()
 
@@ -49,7 +54,7 @@ def eternal_train():
     while training_active:
         with network_lock:
             model.train(dataloader, network, loss_fn, optimizer)
-            _, test_error = model.test(dataloader, network, loss_fn)
+            test_error = model.test(dataloader, network, loss_fn)
         if epoch % 100 == 0:
             print(f"Epoch {epoch}, Loss {test_error:.5f}")
         epoch += 1
@@ -58,14 +63,11 @@ def eternal_train():
 @app.get("/train_epoch")
 def train_epoch():
     with network_lock:
-        out, _ = model.test(dataloader, network, loss_fn)
+        out, _ = model.test_with_output(extrapolated_dataloader, network, loss_fn)
     ret = "["
     for x, y, z in out:
         ret += f"[{x:.2f},{y:.2f},{z:.2f}], "
     ret += "]"
-    # print(ret)
-    # print(out)
-    # print(state)
     return ret
 
 
@@ -87,9 +89,7 @@ def create_network():
 def update_dataset():
     global state, training_active, training_thread
 
-    print(f"Data: {request.get_data()}")
     json_data = request.get_json()
-    print(f"Updated dataset: {json_data}")
     if not json_data or "dataset" not in json_data:
         return "Invalid JSON", 400
 
@@ -105,6 +105,7 @@ def update_dataset():
     with network_lock:
         state.clear()
         state.update(new_state)
+        dataset.mark_dirty()
 
     print(state)
 
